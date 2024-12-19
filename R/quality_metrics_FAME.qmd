@@ -1,0 +1,290 @@
+---
+title: "Quality metrics in targeted salivary metabolomics using T.A.R.D.I.S."
+format: html
+editor: visual
+---
+
+## Introduction
+
+The goal of this analysis is to investigate if manual labeling of peak quality in QC runs of the FAME saliva analysis corresponds well to the metrics that are calculated within T.A.R.D.I.S.
+
+In order to achieve this, I have manually labeled the targets either "good", "bad" or "ambiguous" based on the diagnostic plots of 5 QCs for beginning, middle and end of the analysis.
+
+The metrics themselves are an average of all the QC runs in the whole analysis.
+
+## Loading data
+
+326 targets were manually labelled based on their peaks in 5 representative QCs.
+
+```{r}
+library(readxl)
+featureTableNeg <- read_xlsx("C:/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/quality_analysis/fame_feat_table_neg.xlsx")
+featureTablePos <- read_xlsx("C:/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/quality_analysis/fame_feat_table_pos.xlsx")
+featureTable <- rbind(featureTableNeg,featureTablePos)
+featureTable <- featureTable[-which(is.na(featureTable$Rating)),]
+featureTable <- featureTable[-which(is.na(featureTable$SNR)),]
+```
+
+Seven features were not found in any of the QC runs, and thus were removed from the results, leaving is with 319 targets.
+
+## Summary statistics
+
+Taking a look at the amount of targets per label:
+
+```{r}
+featureTable$Rating <- as.factor(featureTable$Rating)
+table(featureTable$Rating)
+```
+
+163 targets were labelled as Good, 110 as Bad and 46 as Ambiguous.
+
+To increase interpretability, I have log-transformed (base 10) and Pareto scaled AUC & max intensity
+
+```{r}
+library(IMIFA)
+featureTable$AUC <- featureTable$AUC |>
+  log10() |>
+  pareto_scale(centering = TRUE) |>
+  as.numeric()
+featureTable$MaxInt <- featureTable$MaxInt |>
+  log10() |>
+  pareto_scale(centering = TRUE) |>
+  as.numeric()
+```
+
+Summarizing the different metrics of the targets per label class:
+
+```{r}
+library(gtsummary)
+featureTable |>
+  tbl_summary(by = Rating,include = c("AUC","MaxInt","SNR","peak_cor","pop"))
+```
+
+## PCA shows explained variability by quality metrics
+
+```{r}
+pc <- prcomp(~AUC +  MaxInt + SNR + peak_cor + pop, data = featureTable,
+             center = TRUE,
+            scale. = TRUE,
+            na.action = na.omit)
+library(ggfortify)
+library(RColorBrewer)
+library(hrbrthemes)
+
+
+
+p <- ggplot2::autoplot(pc, data = featureTable, colour = 'Rating', shape = "Rating",
+              loadings = TRUE, loadings.colour = 'black',
+              loadings.label = FALSE)  +
+  scale_color_manual(values = brewer.pal(12,"Paired")[c(1,5,3)]) +
+  scale_shape_manual(values = c(16, 17, 18)) + # Different shapes for each group
+  theme_ipsum(base_family = "Aptos", base_size = 10) +
+  theme(axis.title.x = element_text(size = 8),axis.title.y = element_text(size = 8)) +
+  theme(legend.position = "none")  +
+  theme(plot.margin=grid::unit(c(0,0,0,0), "mm"))
+
+
+p <- p +  
+  geom_text(x=0.08, y=0.15, label="peak_cor",family = "Aptos",size = 2) +
+  geom_text(x=0.1, y=0.08, label="SNR",family = "Aptos",size = 2) +
+  geom_text(x=0.1, y=0.0, label="pop",family = "Aptos",size = 2) +
+  geom_text(x=0.1, y=-0.05, label="AUC",family = "Aptos",size = 2) +
+  geom_text(x=0.08, y=-0.09, label="Max. Int.",family = "Aptos",size = 2)
+
+plot(p)
+
+```
+
+```{r}
+p
+ggsave("pca_quality.png",dpi = 300,width = 8.45,
+  height = 6,
+  units = "cm",
+  bg = "white")
+```
+
+## Quality metrics differ significantly between labelled targets
+
+To test if quality metrics significantly differ between the labelled target groups, the non-parametric Kruskal-Wallis test and post-hoc Dunn test were used.
+
+Results were visualized using the `ggstatsplot` package.
+
+```{r}
+library(ggstatsplot)
+library(RColorBrewer)
+featureTable$Rating <- factor(featureTable$Rating, levels = c("Bad", "Ambiguous", "Good"))
+p <- ggbetweenstats(
+  data = featureTable,
+  x = Rating,
+  y = peak_cor,
+  type = "nonparametric",
+  # ANOVA or Kruskal-Wallis
+  plot.type = "box",
+  pairwise.comparisons = FALSE,
+  pairwise.display = "none",
+  p.adjust.method = "holm",
+  centrality.plotting = FALSE,
+  bf.message = FALSE,
+  ylab = "Peak correlation",
+  ggsignif.args = list(
+    textsize = 1,
+    tip_length = 0.01,
+    na.rm = TRUE
+  ),
+  xlab = "",
+  results.subtitle = FALSE
+)  +
+  scale_color_manual(values = brewer.pal(12, "Paired")[c(5, 1, 3)]) +
+  theme_ipsum(base_family = "Aptos", base_size = 8) +
+  theme(axis.title.x = element_text(size = 8),
+        axis.title.y = element_text(size = 8)) +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(
+    size = 8,
+    angle = 45,
+    vjust = 0.5,
+    hjust = 1
+  )) +
+  theme(plot.margin = grid::unit(c(2, 2, 2, 2), "mm")) +
+  theme(
+    axis.title.y.right = element_blank(),
+    axis.text.y.right = element_blank(),
+    axis.ticks.y.right = element_blank()
+  ) + scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.25))
+  
+
+
+# (
+#   df <-
+#     pairwise_comparisons(
+#       featureTable,
+#       Rating,
+#       peak_cor,
+#       type = "nonparametric",
+#       p.adjust.method = "holm"
+#     ) %>%
+#     dplyr::mutate(groups = purrr::pmap(
+#       .l = list(group1, group2), .f = c
+#     )) %>%
+#     dplyr::arrange(group1) %>%
+#     dplyr::mutate(asterisk_label = c("*", "", "*"))
+# )
+# 
+# p <- p +
+#   ggsignif::geom_signif(
+#     comparisons = df$groups,
+#     map_signif_level = TRUE,
+#     annotations = df$asterisk_label,
+#     tip_length = 0.01,
+#     step_increase = 0.1,
+#     margin_top	= 0.01,
+#     test = NULL,
+#     na.rm = TRUE,
+#     vjust = 0.6
+#   )
+#   
+```
+
+```{r}
+q <- ggbetweenstats(
+      data = featureTable,
+      x = Rating,
+      y = SNR,
+      type = "nonparametric", # ANOVA or Kruskal-Wallis
+      plot.type = "box",
+      pairwise.comparisons = FALSE,
+      pairwise.display = "none",
+      centrality.plotting = FALSE,
+      bf.message = FALSE,
+      ggsignif.args = list(textsize = 1, tip_length = 0.01, na.rm = TRUE),
+      ylab = "SNR",
+      xlab = "",
+      results.subtitle = FALSE) +
+  scale_color_manual(values = brewer.pal(12,"Paired")[c(5,1,3)])+
+      theme_ipsum(base_family = "Aptos", base_size = 8) +
+      theme(axis.title.x = element_text(size = 8),
+            axis.title.y = element_text(size = 8)) + 
+      theme(legend.position = "none") + theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) +
+  theme(plot.margin=grid::unit(c(0,0,0,0), "mm"))+
+theme(axis.title.y.right = element_blank(), 
+axis.text.y.right = element_blank(), 
+axis.ticks.y.right = element_blank())
+
+# (df <-
+#     pairwise_comparisons(featureTable, Rating, SNR,type = "nonparametric",p.adjust.method = "holm") %>%
+#     dplyr::mutate(groups = purrr::pmap(.l = list(group1, group2), .f = c)) %>%
+#     dplyr::arrange(group1) %>%
+#     dplyr::mutate(asterisk_label = c("*", "*", "*")))
+# 
+# q <- q +
+#    ggsignif::geom_signif(
+#     comparisons = df$groups,
+#     map_signif_level = TRUE,
+#     annotations = df$asterisk_label,
+#     tip_length = 0.01,
+#     step_increase = 0.1,
+#     margin_top	= 0.01,
+#     test = NULL,
+#     na.rm = TRUE,
+#     vjust = 0.6
+#   )
+  
+```
+
+```{r}
+auc <- ggbetweenstats(
+      data = featureTable,
+      x = Rating,
+      y = AUC,
+    type = "nonparametric", # ANOVA or Kruskal-Wallis
+      plot.type = "box",
+      pairwise.comparisons = TRUE,
+      pairwise.display = "none",
+      centrality.plotting = FALSE,
+      bf.message = FALSE,
+      ggsignif.args = list(textsize = 1, tip_length = 0.01, na.rm = TRUE),
+      ylab = "AUC",
+      xlab = "",
+      results.subtitle = FALSE) +
+  scale_color_manual(values = brewer.pal(12,"Paired")[c(5,1,3)])+
+      theme_ipsum(base_family = "Aptos", base_size = 8) +
+      theme(axis.title.x = element_text(size = 8),
+            axis.title.y = element_text(size = 8)) + 
+      theme(legend.position = "none") + theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1)) +
+  theme(plot.margin=grid::unit(c(0,0,0,0), "mm"))+
+theme(axis.title.y.right = element_blank(), 
+axis.text.y.right = element_blank(), 
+axis.ticks.y.right = element_blank())
+
+# (df <-
+#     pairwise_comparisons(featureTable, Rating, AUC,type = "nonparametric",p.adjust.method = "holm") %>%
+#     dplyr::mutate(groups = purrr::pmap(.l = list(group1, group2), .f = c)) %>%
+#     dplyr::arrange(group1) %>%
+#     dplyr::mutate(asterisk_label = c("*", "*", "*")))
+# 
+# auc <- auc +
+#   ggsignif::geom_signif(
+#     comparisons = df$groups,
+#     map_signif_level = TRUE,
+#     annotations = df$asterisk_label,
+#     tip_length = 0.01,
+#     step_increase = 0.1,
+#     margin_top	= 0.01,
+#     test = NULL,
+#     na.rm = TRUE,
+#     vjust = 0.6
+#   )
+
+```
+
+```{r}
+library(patchwork)
+
+p + q + auc  
+
+ggsave("boxplot.png",dpi = 300,width = 8.4,
+  height = 9,
+  units = "cm")
+```
+
+## 

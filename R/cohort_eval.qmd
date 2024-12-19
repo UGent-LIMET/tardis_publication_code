@@ -1,0 +1,566 @@
+---
+title: "Evaluating TARDIS results in three cohorts"
+format: html
+---
+
+## Introduction
+
+The goal of the analysis is to find out how TARDIS performs when applied to larger cohorts and if the data can be used for statistical analysis.
+
+The four datasets used are:
+
+-   Fecal metabolomics from FGFP
+
+-   Fecal lipidomics from FGFP
+
+-   Urinary metabolomics from ENVIRONAGE
+
+-   Salivary metabolomics from FAME
+
+## Data loading
+
+Let's load all data from the different analyses and structure them as SummarizedExperiment
+
+### FAME
+```{r}
+fame_pos <- read.csv("/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/targeted_results/FAME/saliva_positive/results_5ppm_smoothed/auc_table.csv", check.names = FALSE)[,-1]
+```
+
+```{r}
+fame_neg <- read.csv("/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/targeted_results/FAME/saliva_negative/results_5ppm_smoothed/auc_table.csv", check.names = FALSE)[,-1]
+```
+
+```{r}
+rownames(fame_pos) <- fame_pos$Component
+rownames(fame_neg) <- fame_neg$Component
+fame_neg$Component <- NULL
+fame_pos$Component <- NULL
+```
+
+```{r}
+
+colnames(fame_pos) = colnames(fame_neg)
+```
+
+
+
+```{r}
+fame <- rbind(fame_pos,fame_neg)
+```
+
+```{r}
+sample_names <- DataFrame(colnames(fame))
+feat_names <- DataFrame(rownames(fame))
+```
+
+```{r}
+for(i in  1:dim(sample_names)[1]){
+  if(grepl("QC",sample_names$colnames.fame.[i])){
+    sample_names$type[i] <- "QC"
+  }
+  else{
+    sample_names$type[i] <- "sample"
+  }
+}
+```
+
+```{r}
+fame <- SummarizedExperiment(assays=list(auc=fame),rowData = feat_names,
+                      colData= sample_names)
+fame <- fame[,3:671]
+```
+
+
+### ENVIRONAGE
+
+```{r}
+envir_pos <- read.csv("/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/targeted_results/ENVIRONAGE/urine/positive/results_10ppm_smoothed/auc_table.csv", check.names = FALSE)[,-1]
+```
+
+```{r}
+envir_neg <- read.csv("/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/targeted_results/ENVIRONAGE/urine/negative/results_10ppm_smoothed/auc_table.csv", check.names = FALSE)[,-1]
+```
+
+```{r}
+rownames(envir_pos) <- envir_pos$Component
+rownames(envir_neg) <- envir_neg$Component
+envir_neg$Component <- NULL
+envir_pos$Component <- NULL
+```
+
+```{r}
+envir <- rbind(envir_pos,envir_neg)
+```
+
+```{r}
+sample_names <- DataFrame(colnames(envir))
+feat_names <- DataFrame(rownames(envir))
+```
+
+```{r}
+for(i in  1:dim(sample_names)[1]){
+  if(grepl("QC",sample_names$colnames.envir.[i])){
+    sample_names$type[i] <- "QC"
+  }
+  else{
+    sample_names$type[i] <- "sample"
+  }
+}
+```
+
+```{r}
+envir <- SummarizedExperiment(assays=list(auc=envir),rowData = feat_names,
+                      colData= sample_names)
+```
+
+```{r}
+library(readxl)
+envir_seq <- read_xlsx("/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/targeted_results/ENVIRONAGE/urine/run_seq.xlsx")
+```
+
+```{r}
+runs <-  gsub(pattern = ".mzML",replacement = "",x = colnames(envir))
+runs <- as.data.frame(runs)
+seq <- merge.data.frame(x = runs,y = envir_seq,by.x = "runs",by.y = "file")
+```
+
+```{r}
+colData(envir)$run <- seq$run
+```
+
+```{r}
+runorder <- colData(envir)$run
+ordered_indices <- order(runorder)
+
+# Reorder colData accordingly to keep everything aligned
+colData(envir) <- colData(envir)[ordered_indices, ]
+assay(envir, withDimnames = FALSE) <- assay(envir)[, ordered_indices]
+
+
+```
+
+
+###  FGFP - fecal metabolomics
+
+Load the auc data for pos & neg and merge:
+
+```{r}
+fgfp_meta_pos <- read.csv("/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/targeted_results/FGFP/fecal_metabolomics/positive/5ppm_smoothed/auc_table.csv",check.names = FALSE,)[,-1]
+fgfp_meta_neg <- read.csv("/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/targeted_results/FGFP/fecal_metabolomics/negative/5ppm_smoothed/auc_table.csv",check.names = FALSE,)[,-1]
+rownames(fgfp_meta_pos) <- fgfp_meta_pos$Component
+rownames(fgfp_meta_neg) <- fgfp_meta_neg$Component
+fgfp_meta_neg$Component <- NULL
+fgfp_meta_pos$Component <- NULL
+```
+
+```{r}
+# POS & NEG MZML files didn't have the exact same name (pos qc have leading zeros), so quick fix here:
+
+#remove leading zeros from colnames
+colnames(fgfp_meta_pos) <- gsub("_0+", "_", colnames(fgfp_meta_pos))
+library(magrittr)
+library(dplyr)
+#resort columns for both neg & pos
+fgfp_meta_pos <- fgfp_meta_pos %>% select(sort(names(fgfp_meta_pos)))
+fgfp_meta_neg <- fgfp_meta_neg %>% select(sort(names(fgfp_meta_neg)))
+```
+
+```{r}
+fgfp_meta <- rbind(fgfp_meta_pos,fgfp_meta_neg)
+```
+
+```{r}
+sample_names <- DataFrame(colnames(fgfp_meta))
+feat_names <- DataFrame(rownames(fgfp_meta))
+```
+
+Add sample type
+
+```{r}
+for(i in  1:dim(sample_names)[1]){
+  if(grepl("QC",sample_names$colnames.fgfp_meta.[i])){
+    sample_names$type[i] <- "QC"
+  }
+  else{
+    sample_names$type[i] <- "sample"
+  }
+}
+```
+
+Construct the summarizedexperiment
+
+```{r}
+fgfp_met <- SummarizedExperiment(assays=list(auc=fgfp_meta),rowData = feat_names,
+                      colData= sample_names)
+```
+
+```{r}
+runseq <- read_xlsx("/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/targeted_results/FGFP/fecal_metabolomics/run_seq.xlsx")
+```
+
+```{r}
+runs <-  gsub(pattern = ".mzML",replacement = "",x = colnames(fgfp_met))
+runs <- as.data.frame(runs)
+```
+
+```{r}
+fgfp_met <- fgfp_met[,-which(runs$runs %in% runseq$file == FALSE)]
+```
+
+```{r}
+runs <-  gsub(pattern = ".mzML",replacement = "",x = colnames(fgfp_met))
+runs <- as.data.frame(runs)
+```
+
+```{r}
+seq <- merge.data.frame(x = runs,y = runseq,by.x = "runs",by.y = "file")
+```
+
+```{r}
+colData(fgfp_met)$run <- seq$run
+```
+
+```{r}
+runorder <- colData(fgfp_met)$run
+ordered_indices <- order(runorder)
+
+# Reorder colData accordingly to keep everything aligned
+colData(fgfp_met) <- colData(fgfp_met)[ordered_indices, ]
+assay(fgfp_met, withDimnames = FALSE) <- assay(fgfp_met)[, ordered_indices]
+
+
+```
+
+### FGFP - Lipidomics
+
+```{r}
+fgfp_lip_pos <- read.csv("/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/targeted_results/FGFP/fecal_lipidomics/positive/5ppm_smoothed/auc_table.csv",check.names = FALSE,)[,-1]
+fgfp_lip_neg <- read.csv("/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/targeted_results/FGFP/fecal_lipidomics/negative/5ppm_smoothed/auc_table.csv",check.names = FALSE,)[,-1]
+rownames(fgfp_lip_pos) <- fgfp_lip_pos$Component
+rownames(fgfp_lip_neg) <- fgfp_lip_neg$Component
+fgfp_lip_neg$Component <- NULL
+fgfp_lip_pos$Component <- NULL
+```
+
+```{r}
+fgfp_lip <- rbind(fgfp_lip_neg,fgfp_lip_pos)
+```
+
+```{r}
+sample_names <- DataFrame(colnames(fgfp_lip))
+feat_names <- DataFrame(rownames(fgfp_lip))
+```
+
+```{r}
+for(i in  1:dim(sample_names)[1]){
+  if(grepl("QC",sample_names$colnames.fgfp_lip.[i])){
+    sample_names$type[i] <- "QC"
+  }
+  else{
+    sample_names$type[i] <- "sample"
+  }
+}
+```
+
+```{r}
+fgfp_lip <- SummarizedExperiment(assays=list(auc=fgfp_lip),rowData = feat_names,
+                      colData= sample_names)
+fgfp_lip <- fgfp_lip[,-c(1:6)]
+```
+
+## Data pretreatment
+
+For all datasets, missing values are imputed and data is median normalised, afterwords, target features with a CV higher than 30% in QC runs are removed from the analyses.
+
+### FAME
+
+```{r}
+#' Impute missing values using an uniform distribution
+na_unidis <- function(z) {
+    na <- is.na(z)
+    if (any(na)) {
+        min = min(z, na.rm = TRUE)
+        z[na] <- runif(sum(na), min = min/2, max = min)
+    }
+    z
+}
+#' Row-wise impute missing values and add the data as a new assay
+tmp <- apply(assay(fame, "auc"), MARGIN = 1, na_unidis)
+assays(fame)$imputed <- t(tmp)
+
+
+```
+
+
+```{r}
+assay(fame,"iqc") <- assay(fame,"imputed")
+
+
+for(i in seq(from = 2, to = length(which(fame$type == "QC")), by = 2)){
+  k <-  which(fame$type == "QC")[i-1]
+  l <- which(fame$type == "QC")[i]
+  mean_iqc <- colMeans(rbind(assay(fame, "imputed")[, k], assay(fame, "imputed")[, l]))
+  
+  m <- i-2
+  if(m == 0){
+    p = 1
+    assay(fame,"iqc")[,p:l] <- sweep(assay(fame, "imputed")[,p:l], 1, as.numeric(mean_iqc), "/")
+    #assay(filtered_res,"iqc")[,p:l] <- assay(filtered_res, "imputed")[,p:l] / mean_iqc
+    
+  }
+  else {
+    o <-  which(fame$type == "QC")[m]
+    p <- o + 1
+     assay(fame,"iqc")[,p:l] <- sweep(assay(fame, "imputed")[,p:l], 1, as.numeric(mean_iqc), "/")
+    
+  }
+}
+```
+
+
+
+
+
+```{r}
+library(xcms)
+rsd_filter <- RsdFilter(threshold = 0.3, qcIndex = fame$type == "QC")
+fame_filt <- ProtGenerics::filterFeatures(object = fame, filter = rsd_filter, assay = "iqc")
+```
+
+### ENVIRONAGE
+
+```{r}
+#' Impute missing values using an uniform distribution
+
+#' Row-wise impute missing values and add the data as a new assay
+tmp <- apply(assay(envir, "auc"), MARGIN = 1, na_unidis)
+assays(envir)$imputed <- t(tmp)
+
+
+```
+
+```{r}
+assay(envir,"iqc") <- assay(envir,"imputed")
+
+
+for(i in seq(from = 2, to = length(which(envir$type == "QC")), by = 2)){
+  k <-  which(envir$type == "QC")[i-1]
+  l <- which(envir$type == "QC")[i]
+  mean_iqc <- colMeans(rbind(assay(envir, "imputed")[, k], assay(envir, "imputed")[, l]))
+  
+  m <- i-2
+  if(m == 0){
+    p = 1
+    assay(envir,"iqc")[,p:l] <- sweep(assay(envir, "imputed")[,p:l], 1, as.numeric(mean_iqc), "/")
+    #assay(filtered_res,"iqc")[,p:l] <- assay(filtered_res, "imputed")[,p:l] / mean_iqc
+    
+  }
+  else {
+    o <-  which(envir$type == "QC")[m]
+    p <- o + 1
+     assay(envir,"iqc")[,p:l] <- sweep(assay(envir, "imputed")[,p:l], 1, as.numeric(mean_iqc), "/")
+    
+  }
+}
+```
+
+
+
+```{r}
+rsd_filter <- RsdFilter(threshold = 0.3, qcIndex = envir$type == "QC")
+envir_filt <- ProtGenerics::filterFeatures(object = envir, filter = rsd_filter, assay = "iqc")
+```
+
+
+### FGFP - metabolomics
+
+```{r}
+#' Impute missing values using an uniform distribution
+
+#' Row-wise impute missing values and add the data as a new assay
+tmp <- apply(assay(fgfp_met, "auc"), MARGIN = 1, na_unidis)
+assays(fgfp_met)$imputed <- t(tmp)
+
+
+```
+
+```{r}
+assay(fgfp_met,"iqc") <- assay(fgfp_met,"imputed")
+
+
+for(i in seq(from = 2, to = length(which(fgfp_met$type == "QC")), by = 2)){
+  k <-  which(fgfp_met$type == "QC")[i-1]
+  l <- which(fgfp_met$type == "QC")[i]
+  mean_iqc <- colMeans(rbind(assay(fgfp_met, "imputed")[, k], assay(fgfp_met, "imputed")[, l]))
+  
+  m <- i-2
+  if(m == 0){
+    p = 1
+    assay(fgfp_met,"iqc")[,p:l] <- sweep(assay(fgfp_met, "imputed")[,p:l], 1, as.numeric(mean_iqc), "/")
+    #assay(filtered_res,"iqc")[,p:l] <- assay(filtered_res, "imputed")[,p:l] / mean_iqc
+    
+  }
+  else {
+    o <-  which(fgfp_met$type == "QC")[m]
+    p <- o + 1
+     assay(fgfp_met,"iqc")[,p:l] <- sweep(assay(fgfp_met, "imputed")[,p:l], 1, as.numeric(mean_iqc), "/")
+    
+  }
+}
+```
+
+```{r}
+rsd_filter <- RsdFilter(threshold = 0.3, qcIndex = fgfp_met$type == "QC")
+fgfp_met_filt <- ProtGenerics::filterFeatures(object = fgfp_met, filter = rsd_filter, assay = "iqc")
+```
+
+### FGFP - lipidomics
+
+```{r}
+#' Impute missing values using an uniform distribution
+na_unidis <- function(z) {
+    na <- is.na(z)
+    if (any(na)) {
+        min = min(z, na.rm = TRUE)
+        z[na] <- runif(sum(na), min = min/2, max = min)
+    }
+    z
+}
+#' Row-wise impute missing values and add the data as a new assay
+tmp <- apply(assay(fgfp_lip, "auc"), MARGIN = 1, na_unidis)
+assays(fgfp_lip)$imputed <- t(tmp)
+```
+
+
+```{r}
+assay(fgfp_lip,"iqc") <- assay(fgfp_lip,"imputed")
+
+
+for(i in seq(from = 2, to = length(which(fgfp_lip$type == "QC")), by = 2)){
+  k <-  which(fgfp_lip$type == "QC")[i-1]
+  l <- which(fgfp_lip$type == "QC")[i]
+  mean_iqc <- colMeans(rbind(assay(fgfp_lip, "imputed")[, k], assay(fgfp_lip, "imputed")[, l]))
+  
+  m <- i-2
+  if(m == 0){
+    p = 1
+    assay(fgfp_lip,"iqc")[,p:l] <- sweep(assay(fgfp_lip, "imputed")[,p:l], 1, as.numeric(mean_iqc), "/")
+    #assay(filtered_res,"iqc")[,p:l] <- assay(filtered_res, "imputed")[,p:l] / mean_iqc
+    
+  }
+  else {
+    o <-  which(fgfp_lip$type == "QC")[m]
+    p <- o + 1
+     assay(fgfp_lip,"iqc")[,p:l] <- sweep(assay(fgfp_lip, "imputed")[,p:l], 1, as.numeric(mean_iqc), "/")
+    
+  }
+}
+```
+
+
+```{r}
+rsd_filter <- RsdFilter(threshold = 0.3, qcIndex = fgfp_lip$type == "QC")
+fgfp_lip_filt <- ProtGenerics::filterFeatures(object = fgfp_lip, filter = rsd_filter, assay = "iqc")
+```
+
+## Analysis
+
+### PCA
+
+#### FAME
+
+```{r}
+#' Log2 transform and scale data
+vals <- assay(fame_filt, "iqc") |>
+    log2() |>
+    t() |>
+    scale(center = TRUE, scale = TRUE)
+
+#' Perform the PCA
+pca_res <- prcomp(vals, scale = FALSE, center = FALSE)
+
+
+library(ggfortify)
+pcadata <- data.frame(vals, type = fame_filt$type)
+pca_12_type <- autoplot(pca_res, data = pcadata , colour = "type", scale = 0,main = "FAME") +
+  scale_color_brewer(palette = "Set1",type = "div") +
+   theme_ipsum(base_family = "Aptos", base_size = 11) 
+fame_pca <- pca_12_type
+```
+
+#### ENVIRONAGE
+
+```{r}
+#' Log2 transform and scale data
+vals <- assay(envir_filt, "iqc") |>
+    log2() |>
+    t() |>
+    scale(center = TRUE, scale = TRUE)
+
+#' Perform the PCA
+pca_res <- prcomp(vals, scale = FALSE, center = FALSE)
+
+
+library(ggfortify)
+pcadata <- data.frame(vals, type = envir_filt$type)
+pca_12_type <- autoplot(pca_res, data = pcadata , colour = "type", scale = 0,main = "ENVIRONAGE") +
+  scale_color_brewer(palette = "Set1",type = "div") +
+   theme_ipsum(base_family = "Aptos", base_size = 11)
+envir_pca <- pca_12_type
+```
+
+#### FGFP - metabolomics
+
+```{r}
+#' Log2 transform and scale data
+vals <- assay(fgfp_met_filt, "iqc") |>
+    log2() |>
+    t() |>
+    scale(center = TRUE, scale = TRUE)
+
+#' Perform the PCA
+pca_res <- prcomp(vals, scale = FALSE, center = FALSE)
+
+
+library(ggfortify)
+pcadata <- data.frame(vals, type = fgfp_met_filt$type)
+pca_12_type <- autoplot(pca_res, data = pcadata , colour = "type", scale = 0, main = "FGFP - metabolomics") +
+  scale_color_brewer(palette = "Set1",type = "div") +
+   theme_ipsum(base_family = "Aptos", base_size = 11)
+fgfp_pca_met <- pca_12_type
+```
+
+#### FGFP - lipidomics
+
+```{r}
+#' Log2 transform and scale data
+vals <- assay(fgfp_lip_filt, "iqc") |>
+    log2() |>
+    t() |>
+    scale(center = TRUE, scale = TRUE)
+
+#' Perform the PCA
+pca_res <- prcomp(vals, scale = FALSE, center = FALSE)
+
+
+library(ggfortify)
+pcadata <- data.frame(vals, type = fgfp_lip_filt$type)
+pca_12_type <- autoplot(pca_res, data = pcadata , colour = "type", scale = 0, main = "FGFP - lipidomics") +
+  scale_color_brewer(palette = "Set1",type = "div") +
+   theme_ipsum(base_family = "Aptos", base_size = 11)
+fgfp_pca_lip <- pca_12_type
+```
+
+
+```{r}
+library(patchwork)
+
+(fame_pca + envir_pca) / (fgfp_pca_met + fgfp_pca_lip)
+ggsave("pca_cohorts.png",dpi = 600,width = 18,
+  height = 14,
+  units = "cm",
+  bg = "white")
+```
+
+
+

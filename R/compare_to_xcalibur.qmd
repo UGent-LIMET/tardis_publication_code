@@ -1,0 +1,771 @@
+---
+title: "Comparing TARDIS to manual integration"
+format: html
+---
+
+```{r echo=FALSE}
+
+```
+
+## Introduction
+
+The goal of the analysis is to find out if results of target peak integration using TARDIS is consistent with target peak integration using established software (i.e. Thermo XCalibur).
+
+## ENVIRONAGE
+
+### Loading data
+
+For this analysis, I'm using the AUCs from all QC runs of the urine samples of the ENVIRONAGE cohort.
+
+```{r}
+manual_results <- read.csv("C:/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/compare_to_xcalibur/environage_manual.csv", check.names = FALSE)
+```
+
+```{r}
+results_pos <- read.csv("C:/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/compare_to_xcalibur/environage_pos_auc.csv", check.names = FALSE)
+results_neg <-  read.csv("C:/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/compare_to_xcalibur/environage_neg_auc.csv", check.names = FALSE)
+```
+
+First remove the duplicate targets in the pos & neg results.
+
+```{r}
+results_pos <-  results_pos[-which(results_pos$Component %in% results_neg$Component),]
+
+```
+
+Adding pos and neg together.
+
+```{r}
+results <- rbind(results_pos,results_neg)
+```
+
+Get overlapping compounds in manual and tardis data.
+
+```{r}
+results <- results[which(results$Component %in% manual_results$Component),]
+manual_results <- manual_results[which(manual_results$Component %in% results$Component),]
+
+```
+
+Reduce to only the QCs.
+
+```{r}
+QC <- results[,c(1,grep("QC", colnames(results)))]
+
+```
+
+There seems to be one extra column in the TARDIS data compared to the manual data.
+
+```{r}
+colnames(QC) <- gsub(".mzML", "", colnames(QC))
+```
+
+```{r}
+QC <- QC[,which(colnames(QC) %in% colnames(manual_results))]
+```
+
+Sanity checks
+
+```{r}
+dim(QC)
+```
+
+```{r}
+dim(manual_results)
+```
+
+```{r}
+manual_results[manual_results == "NF"] <- NA
+QC[QC == 0] <- NA
+
+```
+
+```{r}
+manual_results[] <- lapply(manual_results, as.numeric)
+QC[] <- lapply(QC, as.numeric)
+```
+
+### Filter features
+
+Based on the manually integrated data, we remove features that are missing in more than 30% of the QC samples and the ones with a CV \> 30% from both datasets.
+
+First the manually integrated data.
+
+First we remove missing features
+
+```{r}
+df <- manual_results[,-1]
+missing <- rowSums(is.na(df))
+missing_percent <- missing/65*100
+which(missing_percent > 30)
+```
+
+In the manual integration data, there are no features with missing values in more than 30% of the QCs.
+
+Next, impute the remaining NAs
+
+```{r}
+df <- manual_results[,-1]
+#' Impute missing values using an uniform distribution
+na_unidis <- function(z) {
+    na <- is.na(z)
+    if (any(na)) {
+        min = min(z, na.rm = TRUE)
+        z[na] <- runif(sum(na), min = min/2, max = min)
+    }
+    z
+}
+#' Row-wise impute missing values and add the data as a new assay
+tmp <- apply(df, MARGIN = 1, na_unidis)
+tmp <- t(tmp)
+```
+
+Next, we calculate CV per feature and remove the ones with a CV \> 30%
+
+```{r}
+
+cv <- function(x){ sd(x,) / mean(x,) * 100}
+test <- apply(tmp,1, cv)
+length(which(test > 30))
+cv_xcal <- test
+```
+
+85 features have a CV \< 30 in the QCs, these are removed from both datasets.
+
+```{r}
+manual_results <- manual_results[-which(test > 30),]
+```
+
+```{r}
+QC <- QC[which(QC$Component %in% manual_results$Component),]
+```
+
+Next, we repeat the process for the QC dataset.
+
+```{r}
+df <- QC[,-1]
+missing <- rowSums(is.na(df))
+missing_percent <- missing/65*100
+which(missing_percent > 30)
+```
+
+9 features are missing in more than 30% of the QCs, we remove these:
+
+```{r}
+QC <- QC[-which(missing_percent > 30),]
+```
+
+```{r}
+df <- QC[,-1]
+tmp <- apply(df, MARGIN = 1, na_unidis)
+tmp <- t(tmp)
+test <- apply(tmp,1, cv)
+length(which(test > 30))
+```
+
+82 features have a CV \> 30%
+
+```{r}
+QC <- QC[-which(test > 30),]
+
+```
+
+```{r}
+manual_results <- manual_results[which(manual_results$Component %in% QC$Component),]
+```
+
+Finally, we end up with 97 features in 65 QC runs
+
+### Correlation of feature intensity
+
+```{r}
+QC <- QC[order(QC$Component),]
+manual_results <- manual_results[order(manual_results$Component),]
+
+rownames(QC) <- QC$Component
+rownames(manual_results) <- manual_results$Component
+
+```
+
+```{r}
+QC_df <- QC[,-1] 
+xcal_df <- manual_results[,-1] 
+
+QC_df <- apply(QC_df, MARGIN = 1, na_unidis) |> t()
+xcal_df <- apply(xcal_df, MARGIN = 1, na_unidis) |> t()
+```
+
+
+```{r}
+
+xcal_log2 <- as.vector(xcal_df) |> log2()
+tardis_log2 <- as.vector(QC_df) |> log2()
+
+# Calculate R-squared
+model <- lm(xcal_log2 ~ tardis_log2)
+R_squared <- summary(model)$r.squared
+
+# Plot
+plot(tardis_log2, xcal_log2,
+     xlab = "TARDIS",
+     ylab = "XCalibur",
+     main = paste("R² = ", round(R_squared, 3)),
+     pch = 19, col = "blue")
+abline(model, col = "red")
+
+```
+
+
+```{r}
+library(ggstatsplot)
+library(hrbrthemes)
+data <- as.data.frame(cbind(tardis_log2,xcal_log2))
+ggscatterstats(data,
+               tardis_log2,
+               xcal_log2,
+               type = "nonparametric",
+               bf.message = FALSE,
+               marginal = FALSE,
+               xlab = "log2(Area) measured by T.A.R.D.I.S.",
+               ylab ="log2(Area) measured by XCalibur",
+               smooth.line.args = list(method = "lm",col = "#1F78B4")
+               ) +
+theme_ipsum(base_family = "Aptos") 
+```
+
+### CV 
+
+```{r}
+cv_tard <- apply(QC_df,1, cv)
+cv_xcal <- apply(xcal_df, 1, cv)
+
+```
+
+```{r}
+library(tidyr)
+df <- data.frame(
+  Sample = 1:length(cv_tard), # Assuming both vectors have the same length
+  Method1 = cv_tard,
+  Method2 = cv_xcal
+)
+
+# Step 2: Convert to long format
+long_df <- df %>%
+  pivot_longer(cols = c(Method1, Method2), 
+               names_to = "Method", 
+               values_to = "Measurement")
+```
+
+```{r}
+ggwithinstats(long_df,Method,Measurement,type = "n")
+```
+
+## FAME
+
+### Loading data
+
+For this analysis, I'm using the AUCs from all QC runs of the urine samples of the FAME cohort.
+
+```{r}
+manual_results <- read.csv("C:/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/compare_to_xcalibur/fame_manual.csv", check.names = FALSE)
+```
+
+```{r}
+results_pos <- read.csv("C:/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/compare_to_xcalibur/fame_pos.csv", check.names = FALSE)
+results_neg <-  read.csv("C:/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/compare_to_xcalibur/fame_neg.csv", check.names = FALSE)
+```
+
+First remove the duplicate targets in the pos & neg results.
+
+```{r}
+results_pos <-  results_pos[-which(results_pos$Component %in% results_neg$Component),]
+
+```
+
+Adding pos and neg together.
+
+```{r}
+results <- rbind(results_pos,results_neg)
+```
+
+Get overlapping compounds in manual and tardis data.
+
+```{r}
+results <- results[which(results$Component %in% manual_results$Component),]
+manual_results <- manual_results[which(manual_results$Component %in% results$Component),]
+
+```
+
+Reduce to only the QCs.
+
+```{r}
+QC <- results[,c(1,grep("QC", colnames(results)))]
+
+```
+
+
+```{r}
+colnames(QC) <- gsub(".mzML", "", colnames(QC))
+```
+
+```{r}
+QC <- QC[,which(colnames(QC) %in% colnames(manual_results))]
+```
+
+Sanity checks
+
+```{r}
+dim(QC)
+```
+
+```{r}
+dim(manual_results)
+```
+
+```{r}
+manual_results[manual_results == "0"] <- NA
+QC[QC == "0"] <- NA
+
+```
+
+```{r}
+manual_results[] <- lapply(manual_results, as.numeric)
+QC[] <- lapply(QC, as.numeric)
+```
+
+### Filter features
+
+Based on the manually integrated data, we remove features that are missing in more than 30% of the QC samples and the ones with a CV \> 30% from both datasets.
+
+First the manually integrated data.
+
+First we remove missing features
+
+```{r}
+df <- manual_results[,-1]
+missing <- rowSums(is.na(df))
+missing_percent <- missing/124*100
+which(missing_percent > 30)
+```
+
+In the manual integration data, there are no features with missing values in more than 30% of the QCs.
+
+Next, impute the remaining NAs
+
+```{r}
+df <- manual_results[,-1]
+#' Impute missing values using an uniform distribution
+na_unidis <- function(z) {
+    na <- is.na(z)
+    if (any(na)) {
+        min = min(z, na.rm = TRUE)
+        z[na] <- runif(sum(na), min = min/2, max = min)
+    }
+    z
+}
+#' Row-wise impute missing values and add the data as a new assay
+tmp <- apply(df, MARGIN = 1, na_unidis)
+tmp <- t(tmp)
+```
+
+Next, we calculate CV per feature and remove the ones with a CV \> 30%
+
+```{r}
+
+cv <- function(x){ sd(x,) / mean(x,) * 100}
+test <- apply(tmp,1, cv)
+length(which(test > 30))
+```
+
+75 features have a CV \< 30 in the QCs, these are removed from both datasets.
+
+```{r}
+manual_results <- manual_results[-which(test > 30),]
+```
+
+```{r}
+QC <- QC[which(QC$Component %in% manual_results$Component),]
+```
+
+Next, we repeat the process for the QC dataset.
+
+```{r}
+df <- QC[,-1]
+missing <- rowSums(is.na(df))
+missing_percent <- missing/124*100
+which(missing_percent > 30)
+```
+
+3 features are missing in more than 30% of the QCs, we remove these:
+
+```{r}
+QC <- QC[-which(missing_percent > 30),]
+```
+
+```{r}
+df <- QC[,-1]
+tmp <- apply(df, MARGIN = 1, na_unidis)
+tmp <- t(tmp)
+test <- apply(tmp,1, cv)
+length(which(test > 30))
+```
+
+15 features have a CV \> 30%
+
+```{r}
+QC <- QC[-which(test > 30),]
+
+```
+
+```{r}
+manual_results <- manual_results[which(manual_results$Component %in% QC$Component),]
+```
+
+Finally, we end up with 114 features in 65 QC runs
+
+### Correlation of feature intensity
+
+```{r}
+QC <- QC[order(QC$Component),]
+manual_results <- manual_results[order(manual_results$Component),]
+
+rownames(QC) <- QC$Component
+rownames(manual_results) <- manual_results$Component
+
+```
+
+```{r}
+QC_df <- QC[,-1] 
+xcal_df <- manual_results[,-1] 
+
+QC_df <- apply(QC_df, MARGIN = 1, na_unidis) |> t()
+xcal_df <- apply(xcal_df, MARGIN = 1, na_unidis) |> t()
+
+
+```
+
+
+
+```{r}
+
+xcal_log2 <- as.vector(xcal_df) |> log2()
+tardis_log2 <- as.vector(QC_df) |> log2()
+
+# Calculate R-squared
+model <- lm(xcal_log2 ~ tardis_log2)
+R_squared <- summary(model)$r.squared
+
+# Plot
+plot(tardis_log2, xcal_log2,
+     xlab = "TARDIS",
+     ylab = "XCalibur",
+     main = paste("R² = ", round(R_squared, 3)),
+     pch = 19, col = "blue")
+abline(model, col = "red")
+
+```
+
+
+```{r}
+library(ggstatsplot)
+library(hrbrthemes)
+data <- as.data.frame(cbind(tardis_log2,xcal_log2))
+ggscatterstats(data,
+               tardis_log2,
+               xcal_log2,
+               type = "nonparametric",
+               bf.message = FALSE,
+               marginal = FALSE,
+               xlab = "log2(Area) measured by T.A.R.D.I.S.",
+               ylab ="log2(Area) measured by XCalibur",
+               smooth.line.args = list(method = "lm",col = "#1F78B4")
+               ) +
+theme_ipsum(base_family = "Aptos") 
+```
+### CV
+
+```{r}
+cv_tard <- apply(QC_df,1, cv)
+cv_xcal <- apply(xcal_df, 1, cv)
+
+```
+
+```{r}
+library(tidyr)
+df <- data.frame(
+  Sample = 1:length(cv_tard), # Assuming both vectors have the same length
+  Method1 = cv_tard,
+  Method2 = cv_xcal
+)
+
+# Step 2: Convert to long format
+long_df <- df %>%
+  pivot_longer(cols = c(Method1, Method2), 
+               names_to = "Method", 
+               values_to = "Measurement")
+```
+
+```{r}
+ggwithinstats(long_df,Method,Measurement,type = "n")
+```
+
+## FGFP
+
+
+### Loading data
+
+For this analysis, I'm using the AUCs from all QC runs of the urine samples of the ENVIRONAGE cohort.
+
+```{r}
+manual_results <- read.csv("C:/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/compare_to_xcalibur/fgfp_manual.csv", check.names = FALSE)
+```
+
+```{r}
+results_pos <- read.csv("C:/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/compare_to_xcalibur/fgfp_pos.csv", check.names = FALSE)
+results_neg <-  read.csv("C:/Users/pvgeende/OneDrive - UGent/Documents/publications/tardis_paper/data/compare_to_xcalibur/fgfp_neg.csv", check.names = FALSE)
+```
+
+First remove the duplicate targets in the pos & neg results.
+
+```{r}
+results_pos <-  results_pos[-which(results_pos$Component %in% results_neg$Component),]
+
+```
+
+Adding pos and neg together.
+
+```{r}
+# POS & NEG MZML files didn't have the exact same name (pos qc have leading zeros), so quick fix here:
+#remove leading zeros from colnames
+colnames(results_pos) <- gsub("_0+", "_", colnames(results_pos))
+library(magrittr)
+library(dplyr)
+#resort columns for both neg & pos
+results_pos <- results_pos %>% select(sort(names(results_pos)))
+results_neg <- results_neg %>% select(sort(names(results_neg)))
+```
+
+```{r}
+results <- rbind(results_pos,results_neg)
+
+
+```
+
+Get overlapping compounds in manual and tardis data.
+
+```{r}
+results <- results[which(results$Component %in% manual_results$Component),]
+manual_results <- manual_results[which(manual_results$Component %in% results$Component),]
+
+```
+
+Reduce to only the QCs.
+
+```{r}
+QC <- results[,c(302,grep("QC", colnames(results)))]
+
+```
+
+There seems to be one extra column in the TARDIS data compared to the manual data.
+
+```{r}
+colnames(QC) <- gsub(".mzML", "", colnames(QC))
+```
+
+```{r}
+QC <- QC[,which(colnames(QC) %in% colnames(manual_results))]
+```
+
+Sanity checks
+
+```{r}
+dim(QC)
+```
+
+```{r}
+dim(manual_results)
+```
+
+```{r}
+manual_results[manual_results == "NF"] <- NA
+QC[QC == 0] <- NA
+
+```
+
+```{r}
+manual_results[] <- lapply(manual_results, as.numeric)
+QC[] <- lapply(QC, as.numeric)
+```
+
+### Filter features
+
+Based on the manually integrated data, we remove features that are missing in more than 30% of the QC samples and the ones with a CV \> 30% from both datasets.
+
+First the manually integrated data.
+
+First we remove missing features
+
+```{r}
+df <- manual_results[,-1]
+missing <- rowSums(is.na(df))
+missing_percent <- missing/12*100
+which(missing_percent > 30)
+```
+
+In the manual integration data, there are no features with missing values in more than 30% of the QCs.
+
+Next, impute the remaining NAs
+
+```{r}
+df <- manual_results[,-1]
+#' Impute missing values using an uniform distribution
+na_unidis <- function(z) {
+    na <- is.na(z)
+    if (any(na)) {
+        min = min(z, na.rm = TRUE)
+        z[na] <- runif(sum(na), min = min/2, max = min)
+    }
+    z
+}
+#' Row-wise impute missing values and add the data as a new assay
+tmp <- apply(df, MARGIN = 1, na_unidis)
+tmp <- t(tmp)
+```
+
+Next, we calculate CV per feature and remove the ones with a CV \> 30%
+
+```{r}
+
+cv <- function(x){ sd(x,) / mean(x,) * 100}
+test <- apply(tmp,1, cv)
+length(which(test > 30))
+cv_xcal <- test
+```
+
+32 features have a CV \< 30 in the QCs, these are removed from both datasets.
+
+```{r}
+manual_results <- manual_results[-which(test > 30),]
+```
+
+```{r}
+QC <- QC[which(QC$Component %in% manual_results$Component),]
+```
+
+Next, we repeat the process for the QC dataset.
+
+```{r}
+df <- QC[,-1]
+missing <- rowSums(is.na(df))
+missing_percent <- missing/12*100
+which(missing_percent > 30)
+```
+
+5 features are missing in more than 30% of the QCs, we remove these:
+
+```{r}
+QC <- QC[-which(missing_percent > 30),]
+```
+
+```{r}
+df <- QC[,-1]
+tmp <- apply(df, MARGIN = 1, na_unidis)
+tmp <- t(tmp)
+test <- apply(tmp,1, cv)
+length(which(test > 30))
+```
+
+27 features have a CV \> 30%
+
+```{r}
+QC <- QC[-which(test > 30),]
+
+```
+
+```{r}
+manual_results <- manual_results[which(manual_results$Component %in% QC$Component),]
+```
+
+Finally, we end up with 272 features in 12 QC runs
+
+### Correlation of feature intensity
+
+```{r}
+QC <- QC[order(QC$Component),]
+manual_results <- manual_results[order(manual_results$Component),]
+
+rownames(QC) <- QC$Component
+rownames(manual_results) <- manual_results$Component
+
+```
+
+```{r}
+QC_df <- QC[,-1] 
+xcal_df <- manual_results[,-1] 
+
+QC_df <- apply(QC_df, MARGIN = 1, na_unidis) |> t()
+xcal_df <- apply(xcal_df, MARGIN = 1, na_unidis) |> t()
+```
+
+```{r}
+
+xcal_log2 <- as.vector(xcal_df) |> log2()
+tardis_log2 <- as.vector(QC_df) |> log2()
+
+# Calculate R-squared
+model <- lm(xcal_log2 ~ tardis_log2)
+R_squared <- summary(model)$r.squared
+
+# Plot
+plot(tardis_log2, xcal_log2,
+     xlab = "TARDIS",
+     ylab = "XCalibur",
+     main = paste("R² = ", round(R_squared, 3)),
+     pch = 19, col = "blue")
+abline(model, col = "red")
+
+```
+
+
+```{r}
+library(ggstatsplot)
+library(hrbrthemes)
+data <- as.data.frame(cbind(tardis_log2,xcal_log2))
+ggscatterstats(data,
+               tardis_log2,
+               xcal_log2,
+               type = "nonparametric",
+               bf.message = FALSE,
+               marginal = FALSE,
+               xlab = "log2(Area) measured by T.A.R.D.I.S.",
+               ylab ="log2(Area) measured by XCalibur",
+               smooth.line.args = list(method = "lm",col = "#1F78B4")
+               ) +
+theme_ipsum(base_family = "Aptos") 
+```
+### CV
+
+```{r}
+cv_tard <- apply(QC_df,1, cv)
+cv_xcal <- apply(xcal_df, 1, cv)
+
+```
+
+```{r}
+library(tidyr)
+df <- data.frame(
+  Sample = 1:length(cv_tard), # Assuming both vectors have the same length
+  Method1 = cv_tard,
+  Method2 = cv_xcal
+)
+
+# Step 2: Convert to long format
+long_df <- df %>%
+  pivot_longer(cols = c(Method1, Method2), 
+               names_to = "Method", 
+               values_to = "Measurement")
+```
+
+```{r}
+ggwithinstats(long_df,Method,Measurement,type = "n")
+```
